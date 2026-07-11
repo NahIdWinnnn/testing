@@ -1,0 +1,349 @@
+diff --git a/cmake/linux/dependencies.cmake b/cmake/linux/dependencies.cmake
+index 28eb3ba..7e1c167 100644
+--- a/cmake/linux/dependencies.cmake
++++ b/cmake/linux/dependencies.cmake
+@@ -34,7 +34,10 @@ set(OpenGL_GL_PREFERENCE "GLVND")
+ ## Find GLEW
+ ############
+ ##for headless rendering
+-find_package(EGL QUIET)
++option(SIBR_ENABLE_EGL "Enable EGL support for headless GLFW/GLEW" OFF)
++if(SIBR_ENABLE_EGL)
++    find_package(EGL QUIET)
++endif()
+ 
+ if(EGL_FOUND)
+     add_definitions(-DGLEW_EGL)
+@@ -143,7 +146,7 @@ add_definitions(-DEIGEN_INITIALIZE_MATRICES_BY_ZERO)
+ #############
+ ## Find Boost
+ #############
+-set(Boost_REQUIRED_COMPONENTS "system;chrono;filesystem;date_time" CACHE INTERNAL "Boost Required Components")
++set(Boost_REQUIRED_COMPONENTS "chrono;filesystem;date_time" CACHE INTERNAL "Boost Required Components")
+ 
+ if (WIN32)
+     # boost multiset arguments
+diff --git a/src/core/assets/CameraRecorder.cpp b/src/core/assets/CameraRecorder.cpp
+index b821210..88bbcb7 100755
+--- a/src/core/assets/CameraRecorder.cpp
++++ b/src/core/assets/CameraRecorder.cpp
+@@ -414,11 +414,11 @@ namespace sibr
+ 			return false;
+ 		}
+ 		_ow = w, _oh = h;
+-		if (boost::filesystem::extension(pathFileName) == ".out")
++		if (boost::filesystem::path(pathFileName).extension().string() == ".out")
+ 			loadBundle(pathFileName, w, h);
+-		else if (boost::filesystem::extension(pathFileName) == ".lookat")
++		else if (boost::filesystem::path(pathFileName).extension().string() == ".lookat")
+ 			loadLookat(pathFileName, w, h);
+-		else if (boost::filesystem::extension(pathFileName) == ".txt")
++		else if (boost::filesystem::path(pathFileName).extension().string() == ".txt")
+ 			loadColmap(pathFileName, w, h);
+ 		else
+ 			load(pathFileName);
+diff --git a/src/core/graphics/Window.cpp b/src/core/graphics/Window.cpp
+index 7a33379..717a689 100755
+--- a/src/core/graphics/Window.cpp
++++ b/src/core/graphics/Window.cpp
+@@ -25,10 +25,15 @@ namespace sibr
+ {
+ 	int Window::contextId = -1;
+ 
+-	static void glfwErrorCallback(int error, const char* description)
+-	{
+-		SIBR_ERR << description << std::endl;
+-	}
++	static void glfwErrorCallback(int error, const char* description)
++	{
++		const std::string message = description != nullptr ? std::string(description) : std::string();
++		if (message.find("Wayland:") != std::string::npos && message.find("window position") != std::string::npos) {
++			SIBR_WRG << description << std::endl;
++			return;
++		}
++		SIBR_ERR << description << std::endl;
++	}
+ 
+ 	static void glErrorCallback(GLenum src, GLenum type, GLuint id, GLenum severity, GLsizei size, const GLchar* str, const void* user) {
+ 		// For now we only log errors, and we ignore severity.
+@@ -308,16 +313,21 @@ namespace sibr
+ 		SIBR_LOG << "OpenGL Version: " << glGetString(GL_VERSION)
+ 			<< "[major: " << major << ", minor: " << minor << "]" << std::endl;
+ 
+-		glewExperimental = GL_TRUE;
+-		GLenum err = glewInit();
+-#ifdef GLEW_EGL
+-//		if (err != GLEW_OK && (!args.offscreen || err != GLEW_ERROR_NO_GLX_DISPLAY)) // Small hack for glew, this error occurs but does not concern offscreen
+-		if (err != GLEW_OK && (!args.offscreen )) // Small hack for glew, this error occurs but does not concern offscreen
+-#else
+-		if (err != GLEW_OK)
+-#endif
+-			SIBR_ERR << "cannot initialize GLEW (used to load OpenGL function)" << std::endl;
+-		(void)glGetError(); // I notice that glew might do wrong things during its init()
++			glewExperimental = GL_TRUE;
++			GLenum err = glewInit();
++			const bool ignoreGlewNoGlxDisplay =
++				err == GLEW_ERROR_NO_GLX_DISPLAY && glGetString(GL_VERSION) != nullptr;
++#ifdef GLEW_EGL
++//		if (err != GLEW_OK && (!args.offscreen || err != GLEW_ERROR_NO_GLX_DISPLAY)) // Small hack for glew, this error occurs but does not concern offscreen
++			if (err != GLEW_OK && (!args.offscreen ) && !ignoreGlewNoGlxDisplay) // Small hack for glew, this error occurs but does not concern offscreen
++#else
++			if (err != GLEW_OK && !ignoreGlewNoGlxDisplay)
++#endif
++				SIBR_ERR << "cannot initialize GLEW (used to load OpenGL function): " << glewGetErrorString(err) << std::endl;
++			if (ignoreGlewNoGlxDisplay) {
++				SIBR_WRG << "GLEW reported missing GLX display, but a valid OpenGL context exists. Continuing for WSLg compatibility." << std::endl;
++			}
++			(void)glGetError(); // I notice that glew might do wrong things during its init()
+ 							// some drivers complain about it. So I reset OpenGL's errors to discard this.
+ 
+ 		glfwSetWindowUserPointer(_glfwWin.get(), this);
+diff --git a/src/core/raycaster/Raycaster.cpp b/src/core/raycaster/Raycaster.cpp
+index 1733636..ca456a3 100644
+--- a/src/core/raycaster/Raycaster.cpp
++++ b/src/core/raycaster/Raycaster.cpp
+@@ -208,9 +208,15 @@ namespace sibr
+ 			SIBR_ERR << "cannot initialize embree, failed cast rays." << std::endl;
+ 		else
+ 		{
++#if RTC_VERSION_MAJOR >= 4
++			RTCOccludedArguments args;
++			rtcInitOccludedArguments(&args);
++			rtcOccluded1(*_scene.get(), &ray, &args);
++#else
+ 			RTCIntersectContext context;
+ 			rtcInitIntersectContext(&context);
+ 			rtcOccluded1(*_scene.get(), &context, &ray);
++#endif
+ 		}
+ 		return ray.tfar < 0.0f;
+ 	}
+@@ -237,9 +243,15 @@ namespace sibr
+ 			SIBR_ERR << "cannot initialize embree, failed cast rays." << std::endl;
+ 		else
+ 		{
++#if RTC_VERSION_MAJOR >= 4
++			RTCOccludedArguments args;
++			rtcInitOccludedArguments(&args);
++			rtcOccluded8(valid8, *_scene.get(), &ray, &args);
++#else
+ 			RTCIntersectContext context;
+ 			rtcInitIntersectContext(&context);
+ 			rtcOccluded8(valid8, *_scene.get(), &context, &ray);
++#endif
+ 		}
+ 
+ 		std::array<bool, 8> res;
+@@ -272,9 +284,15 @@ namespace sibr
+ 			SIBR_ERR << "cannot initialize embree, failed cast rays." << std::endl;
+ 		else
+ 		{
++#if RTC_VERSION_MAJOR >= 4
++			RTCIntersectArguments args;
++			rtcInitIntersectArguments(&args);
++			rtcIntersect1(*_scene.get(), &rh, &args);
++#else
+ 			RTCIntersectContext context;
+ 			rtcInitIntersectContext(&context);
+ 			rtcIntersect1(*_scene.get(), &context, &rh);
++#endif
+ 			rh.hit.Ng_x = -rh.hit.Ng_x; // EMBREE_FIXME: only correct for triangles,quads, and subdivision surfaces
+ 			rh.hit.Ng_y = -rh.hit.Ng_y;
+ 			rh.hit.Ng_z = -rh.hit.Ng_z;
+@@ -319,9 +337,15 @@ namespace sibr
+ 			SIBR_ERR << "cannot initialize embree, failed cast rays." << std::endl;
+ 		else
+ 		{
++#if RTC_VERSION_MAJOR >= 4
++			RTCIntersectArguments args;
++			rtcInitIntersectArguments(&args);
++			rtcIntersect8(valid8.data(), *_scene.get(), &rh, &args);
++#else
+ 			RTCIntersectContext context;
+ 			rtcInitIntersectContext(&context);
+ 			rtcIntersect8(valid8.data(), *_scene.get(), &context, &rh);
++#endif
+ 		}
+ 
+ 		std::array<RayHit, 8> res;
+diff --git a/src/core/scene/ProxyMesh.cpp b/src/core/scene/ProxyMesh.cpp
+index 19c1812..620b9d1 100644
+--- a/src/core/scene/ProxyMesh.cpp
++++ b/src/core/scene/ProxyMesh.cpp
+@@ -19,7 +19,7 @@ namespace sibr {
+ 	{
+ 		_proxy.reset(new Mesh());
+ 		// GD HACK
+-		if (boost::filesystem::extension(data->meshPath()) == ".bin") {
++		if (boost::filesystem::path(data->meshPath()).extension().string() == ".bin") {
+ 			if (!_proxy->loadSfM(data->meshPath(), data->basePathName())) {
+ 				SIBR_WRG << "proxy model not found at " << data->meshPath() << std::endl;
+ 			}
+@@ -58,4 +58,3 @@ namespace sibr {
+ 
+ 
+ }
+-
+diff --git a/src/core/system/CommandLineArgs.hpp b/src/core/system/CommandLineArgs.hpp
+index b83e9a1..8478a37 100644
+--- a/src/core/system/CommandLineArgs.hpp
++++ b/src/core/system/CommandLineArgs.hpp
+@@ -31,16 +31,16 @@ namespace sibr
+ 
+ 	/// uint contexpr helper, defining the number of command line tokens required to init T
+ 	template<typename T>
+-	constexpr uint NumberOfArg = 1;
++	inline constexpr uint NumberOfArg = 1;
+ 	/// uint contexpr helper, defining the number of command line tokens required to init T
+ 	template<>
+-	constexpr uint NumberOfArg<bool> = 0;
++	inline constexpr uint NumberOfArg<bool> = 0;
+ 	/// uint contexpr helper, defining the number of command line tokens required to init T
+ 	template<>
+-	constexpr uint NumberOfArg<Switch> = 0;
++	inline constexpr uint NumberOfArg<Switch> = 0;
+ 	/// uint contexpr helper, defining the number of command line tokens required to init T
+ 	template<typename T, uint N>
+-	constexpr uint NumberOfArg<sibr::Vector<T, N>> = N * NumberOfArg<T>;
++	inline constexpr uint NumberOfArg<sibr::Vector<T, N>> = N * NumberOfArg<T>;
+ 
+ 	/// Helper to extract values from a vector of strings.
+ 	template<typename T> struct ValueGetter {
+diff --git a/src/core/system/Utils.cpp b/src/core/system/Utils.cpp
+index 06670fd..cdb8f78 100755
+--- a/src/core/system/Utils.cpp
++++ b/src/core/system/Utils.cpp
+@@ -272,7 +272,7 @@ namespace sibr
+ 				return false;
+ 			}
+ 			if(overwrite) {
+-				fs::copy_file(source, destination, boost::filesystem::copy_option::overwrite_if_exists);
++				fs::copy_file(source, destination, boost::filesystem::copy_options::overwrite_existing);
+ 			} else {
+ 				fs::copy_file(source, destination);
+ 			}
+diff --git a/src/core/video/CMakeLists.txt b/src/core/video/CMakeLists.txt
+index 5bf35cb..dc5ab84 100644
+--- a/src/core/video/CMakeLists.txt
++++ b/src/core/video/CMakeLists.txt
+@@ -18,6 +18,7 @@ source_group("Source Files" FILES ${SOURCES})
+ add_library(${PROJECT_NAME} SHARED ${SOURCES})
+ 
+ include_directories(${Boost_INCLUDE_DIRS})
++target_compile_definitions(${PROJECT_NAME} PRIVATE SIBR_DISABLE_FFMPEG_ENCODER)
+ target_link_libraries(${PROJECT_NAME}
+ 	${FFMPEG_LIBRARIES}
+ 	OpenMP::OpenMP_CXX
+diff --git a/src/core/video/FFmpegVideoEncoder.cpp b/src/core/video/FFmpegVideoEncoder.cpp
+index d908531..88cb82d 100644
+--- a/src/core/video/FFmpegVideoEncoder.cpp
++++ b/src/core/video/FFmpegVideoEncoder.cpp
+@@ -12,7 +12,7 @@
+ 
+ #include "FFmpegVideoEncoder.hpp"
+ 
+-#ifndef HEADLESS
++#if !defined(HEADLESS) && !defined(SIBR_DISABLE_FFMPEG_ENCODER)
+ extern "C"
+ {
+ #include <libavcodec/avcodec.h>
+@@ -37,7 +37,7 @@ namespace sibr {
+ 		bool forceResize
+ 	) : filepath(_filepath), fps(_fps), _forceResize(forceResize)
+ 	{
+-#ifndef HEADLESS
++#if !defined(HEADLESS) && !defined(SIBR_DISABLE_FFMPEG_ENCODER)
+ 		/** Init FFMPEG, registering available codec plugins. */
+ 		if (!ffmpegInitDone) {
+ 			SIBR_LOG << "[FFMPEG] Registering all." << std::endl;
+@@ -73,7 +73,7 @@ namespace sibr {
+ 
+ 	void FFVideoEncoder::close()
+ 	{
+-#ifndef HEADLESS
++#if !defined(HEADLESS) && !defined(SIBR_DISABLE_FFMPEG_ENCODER)
+ 		if (av_write_trailer(pFormatCtx) < 0) {
+ 			SIBR_WRG << "[FFMPEG] Can not av_write_trailer " << std::endl;
+ 		}
+@@ -99,7 +99,7 @@ namespace sibr {
+ 
+ 	void FFVideoEncoder::init(const sibr::Vector2i & size)
+ 	{
+-#ifndef HEADLESS
++#if !defined(HEADLESS) && !defined(SIBR_DISABLE_FFMPEG_ENCODER)
+ 		w = size[0];
+ 		h = size[1];
+ 
+@@ -190,7 +190,7 @@ namespace sibr {
+ 
+ 	bool FFVideoEncoder::operator<<(cv::Mat frame)
+ 	{
+-#ifndef HEADLESS
++#if !defined(HEADLESS) && !defined(SIBR_DISABLE_FFMPEG_ENCODER)
+ 		if (!video_st) {
+ 			return false;
+ 		}
+@@ -226,7 +226,7 @@ namespace sibr {
+ 		return (*this)<<(frame.toOpenCVBGR());
+ 	}
+ 
+-#ifndef HEADLESS
++#if !defined(HEADLESS) && !defined(SIBR_DISABLE_FFMPEG_ENCODER)
+ 	bool FFVideoEncoder::encode(AVFrame * frame)
+ 	{
+ 		int got_picture = 0;
+diff --git a/src/core/view/InteractiveCameraHandler.cpp b/src/core/view/InteractiveCameraHandler.cpp
+index 88145b0..6f0cd67 100755
+--- a/src/core/view/InteractiveCameraHandler.cpp
++++ b/src/core/view/InteractiveCameraHandler.cpp
+@@ -441,7 +441,7 @@ namespace sibr {
+ 				std::cin.get();
+ 
+ 				_cameraRecorder.reset();
+-				if (boost::filesystem::extension(filename) == ".out")
++				if (boost::filesystem::path(filename).extension().string() == ".out")
+ 					_cameraRecorder.loadBundle(filename, w, h);
+ 				else
+ 					_cameraRecorder.load(filename);
+@@ -685,11 +685,11 @@ namespace sibr {
+ 						if (!selectedFile.empty()) {
+ 							SIBR_LOG << "Loading" << std::endl;
+ 							_cameraRecorder.reset();
+-							if (boost::filesystem::extension(selectedFile) == ".out")
++							if (boost::filesystem::path(selectedFile).extension().string() == ".out")
+ 								_cameraRecorder.loadBundle(selectedFile, _currentCamera.w(), _currentCamera.h());
+-							else if (boost::filesystem::extension(selectedFile) == ".lookat")
++							else if (boost::filesystem::path(selectedFile).extension().string() == ".lookat")
+ 								_cameraRecorder.loadLookat(selectedFile, _currentCamera.w(), _currentCamera.h());
+-							else if (boost::filesystem::extension(selectedFile) == ".txt")
++							else if (boost::filesystem::path(selectedFile).extension().string() == ".txt")
+ 								_cameraRecorder.loadColmap(selectedFile, _currentCamera.w(), _currentCamera.h());
+ 							else
+ 								_cameraRecorder.load(selectedFile);
+@@ -759,4 +759,3 @@ namespace sibr {
+ 	}
+ 
+ }
+-
+diff --git a/src/projects/gaussianviewer/renderer/CMakeLists.txt b/src/projects/gaussianviewer/renderer/CMakeLists.txt
+index f95f329..39a36b2 100644
+--- a/src/projects/gaussianviewer/renderer/CMakeLists.txt
++++ b/src/projects/gaussianviewer/renderer/CMakeLists.txt
+@@ -14,6 +14,17 @@ sibr_gitlibrary(TARGET CudaRasterizer
+     GIT_REPOSITORY 	"https://github.com/graphdeco-inria/diff-gaussian-rasterization.git"
+     GIT_TAG			"255c532d5fd0c3d83afec0e8e49574b65ae381bd"
+ )
++if(TARGET CudaRasterizer)
++	get_target_property(CUDA_RASTERIZER_INCLUDES CudaRasterizer INCLUDE_DIRECTORIES)
++	if(CUDA_RASTERIZER_INCLUDES)
++		list(REMOVE_ITEM CUDA_RASTERIZER_INCLUDES "/usr/include/x86_64-linux-gnu")
++		set_target_properties(CudaRasterizer PROPERTIES INCLUDE_DIRECTORIES "${CUDA_RASTERIZER_INCLUDES}")
++	endif()
++	target_compile_options(CudaRasterizer PRIVATE
++		$<$<COMPILE_LANGUAGE:CUDA>:-include>
++		$<$<COMPILE_LANGUAGE:CUDA>:cstdint>
++	)
++endif()
+ 
+ find_package(CUDAToolkit REQUIRED)
+ 

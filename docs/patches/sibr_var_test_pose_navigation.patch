@@ -1,0 +1,89 @@
+diff --git a/src/projects/gaussianviewer/apps/gaussianViewer/main.cpp b/src/projects/gaussianviewer/apps/gaussianViewer/main.cpp
+index a49c37f..572cf02 100644
+--- a/src/projects/gaussianviewer/apps/gaussianViewer/main.cpp
++++ b/src/projects/gaussianviewer/apps/gaussianViewer/main.cpp
+@@ -223,6 +223,27 @@ int main(int ac, char** av)
+ 	sibr::InteractiveCameraHandler::Ptr generalCamera(new InteractiveCameraHandler());
+ 	generalCamera->setup(scene->cameras()->inputCameras(), Viewport(0, 0, (float)usedResolution.x(), (float)usedResolution.y()), nullptr);
+ 
++	const auto& varTestCameras = scene->cameras()->inputCameras();
++	int varTestPoseIndex = 0;
++	auto snapVarTestPose = [&](int targetIndex)
++	{
++		if (varTestCameras.empty())
++			return;
++		if (targetIndex < 0)
++			targetIndex = 0;
++		const int lastIndex = int(varTestCameras.size()) - 1;
++		if (targetIndex > lastIndex)
++			targetIndex = lastIndex;
++		varTestPoseIndex = targetIndex;
++		generalCamera->snapToCamera(varTestPoseIndex);
++	};
++	if (!varTestCameras.empty())
++	{
++		snapVarTestPose(0);
++		SIBR_LOG << "VAR Test Poses loaded: " << varTestCameras.size()
++			<< " cameras from " << myArgs.dataset_path.get() << std::endl;
++	}
++
+ 	// Add views to mvm.
+ 	MultiViewManager        multiViewManager(window, false);
+ 
+@@ -237,6 +258,7 @@ int main(int ac, char** av)
+ 	multiViewManager.addSubView("Top view", topView, usedResolution);
+ 	CHECK_GL_ERROR;
+ 	topView->active(false);
++	multiViewManager.toggleSubViewsGUI();
+ 
+ 	// save images
+ 	generalCamera->getCameraRecorder().setViewPath(gaussianView, myArgs.dataset_path.get());
+@@ -257,9 +279,48 @@ int main(int ac, char** av)
+ 			window.close();
+ 		}
+ 
++		if (!varTestCameras.empty())
++		{
++			if (sibr::Input::global().key().isPressed(sibr::Key::Left))
++				snapVarTestPose(varTestPoseIndex - 1);
++			if (sibr::Input::global().key().isPressed(sibr::Key::Right))
++				snapVarTestPose(varTestPoseIndex + 1);
++		}
++
+ 		multiViewManager.onUpdate(sibr::Input::global());
+ 		multiViewManager.onRender(window);
+ 
++		ImGui::SetNextWindowPos(ImVec2(20, 80), ImGuiCond_Once);
++		ImGui::SetNextWindowSize(ImVec2(360, 118), ImGuiCond_Once);
++		if (ImGui::Begin("VAR Test Poses"))
++		{
++			if (varTestCameras.empty())
++			{
++				ImGui::TextUnformatted("No test poses loaded");
++			}
++			else
++			{
++				ImGui::Text("Test pose %d / %d", varTestPoseIndex + 1, int(varTestCameras.size()));
++				ImGui::TextWrapped("%s", varTestCameras[varTestPoseIndex]->name().c_str());
++
++				if (ImGui::Button("First"))
++					snapVarTestPose(0);
++				ImGui::SameLine();
++				if (ImGui::Button("Prev"))
++					snapVarTestPose(varTestPoseIndex - 1);
++				ImGui::SameLine();
++				if (ImGui::Button("Next"))
++					snapVarTestPose(varTestPoseIndex + 1);
++				ImGui::SameLine();
++				if (ImGui::Button("Last"))
++					snapVarTestPose(int(varTestCameras.size()) - 1);
++
++				ImGui::Separator();
++				ImGui::TextUnformatted("Left/Right changes test pose. WASD still moves freely.");
++			}
++		}
++		ImGui::End();
++
+ 		window.swapBuffer();
+ 		CHECK_GL_ERROR;
+ 	}

@@ -1,0 +1,3 @@
+environment: graphdeco
+iterations: 30000
+extra_train_args: []

@@ -1,0 +1,4 @@
+method: graphdeco
+data_root: data/public
+runs_root: runs
+submissions_root: submissions

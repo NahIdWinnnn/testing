@@ -1,0 +1,3 @@
+[submodule "methods/sibr_viewers"]
+	path = methods/sibr_viewers
+	url = https://gitlab.inria.fr/sibr/sibr_core.git

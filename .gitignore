@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.venv/
+/.env
+/.local/
+/srv/
+/data/
+/VAI_NVS_DATA/
+/runs/
+/submissions/
+*.log
+*.zip
+.DS_Store
+.streamlit/secrets.toml

@@ -1,0 +1,5 @@
+method: graphdeco
+method_config: configs/methods/graphdeco.yaml
+data_root: VAI_NVS_DATA/phase1/private_set1
+runs_root: runs
+submissions_root: submissions
