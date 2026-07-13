@@ -22,5 +22,10 @@ Current method patch:
   `boost_system`, Boost filesystem API changes, Embree 4 headers/libraries,
   CUDA 12.8 rasterizer compile quirks, newer FFmpeg headers, optional EGL, and
   WSLg GLEW/Wayland window-position warnings.
+- modify `methods/graphdeco/arguments/__init__.py` OptimizationParams defaults
+  for VAR 2026 quality over speed: iterations 30k→60k, densify_until_iter
+  15k→30k, densification_interval 100→50, densify_grad_threshold 0.0002→0.00005,
+  opacity_reset_interval 3000→2000, position_lr_max_steps 30k→60k. This trades
+  real-time rendering for better quality in distant regions, edges, and horizons.
 
 Do not commit `build/` or `*.egg-info/`.
